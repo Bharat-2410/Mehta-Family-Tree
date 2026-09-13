@@ -462,6 +462,21 @@
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDS6xdQNkZOESd2mOLq85_YI15SDVHV-hQ",
+  authDomain: "mehta-odhawani-tree.firebaseapp.com",
+  databaseURL: "https://mehta-odhawani-tree-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "mehta-odhawani-tree",
+  storageBucket: "mehta-odhawani-tree.firebasestorage.app",
+  messagingSenderId: "249234994328",
+  appId: "1:249234994328:web:47088a0de294152b480ced"
+};
+firebase.initializeApp(firebaseConfig);
+const fbdb = firebase.database();
+</script>
 <script>
 const NODE_W = 118;
 const NODE_H = 40;
@@ -769,75 +784,115 @@ document.getElementById('lineGo').addEventListener('click', () => {
 /* ===================== ADMIN EMAIL (shared submit target) ===================== */
 const ADMIN_EMAIL = 'aquaticremedies@gmail.com';
 
-/* ===================== MY PROFILE ===================== */
+/* ===================== MY PROFILE (shared via Firebase) ===================== */
 setupAutocomplete('profName','profName-list');
-function loadProfile() {
-  try { return JSON.parse(localStorage.getItem('odhawani_profile')||'{}'); } catch(e){ return {}; }
+function safeKey(name) {
+  return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 }
-(function initProfile(){
-  const p = loadProfile();
-  if (p.name) document.getElementById('profName').value = p.name;
-  if (p.age) document.getElementById('profAge').value = p.age;
-  if (p.contact) document.getElementById('profContact').value = p.contact;
-  if (p.address) document.getElementById('profAddress').value = p.address;
-  if (p.name) document.getElementById('profShare').style.display = 'block';
-})();
+let currentProfileKey = null;
+function fillProfileForm(p) {
+  document.getElementById('profAge').value = p.age || '';
+  document.getElementById('profContact').value = p.contact || '';
+  document.getElementById('profAddress').value = p.address || '';
+}
+document.getElementById('profName').addEventListener('change', () => {
+  const key = safeKey(document.getElementById('profName').value);
+  if (!key) return;
+  fbdb.ref('profiles/' + key).once('value').then(snap => {
+    const p = snap.val();
+    if (p) { fillProfileForm(p); document.getElementById('profShare').style.display = 'block'; }
+  });
+});
 document.getElementById('profSave').addEventListener('click', () => {
+  const name = document.getElementById('profName').value.trim();
+  const key = safeKey(name);
+  if (!key) { alert('Please enter your name first.'); return; }
   const p = {
-    name: document.getElementById('profName').value.trim(),
+    name,
     age: document.getElementById('profAge').value.trim(),
     contact: document.getElementById('profContact').value.trim(),
-    address: document.getElementById('profAddress').value.trim()
+    address: document.getElementById('profAddress').value.trim(),
+    updatedAt: new Date().toISOString()
   };
-  localStorage.setItem('odhawani_profile', JSON.stringify(p));
-  document.getElementById('profSavedMsg').style.display = 'block';
-  document.getElementById('profShare').style.display = 'block';
-  setTimeout(()=>{ document.getElementById('profSavedMsg').style.display='none'; }, 2500);
+  fbdb.ref('profiles/' + key).set(p).then(() => {
+    document.getElementById('profSavedMsg').style.display = 'block';
+    document.getElementById('profShare').style.display = 'block';
+    setTimeout(()=>{ document.getElementById('profSavedMsg').style.display='none'; }, 2500);
+  });
 });
 document.getElementById('profShare').addEventListener('click', () => {
-  const p = loadProfile();
-  const subject = encodeURIComponent('My profile update - ' + (p.name||''));
-  const body = encodeURIComponent(`Name: ${p.name}\nAge: ${p.age}\nContact: ${p.contact}\nAddress: ${p.address}`);
+  const name = document.getElementById('profName').value.trim();
+  const subject = encodeURIComponent('My profile update - ' + name);
+  const body = encodeURIComponent(`Name: ${name}\nAge: ${document.getElementById('profAge').value}\nContact: ${document.getElementById('profContact').value}\nAddress: ${document.getElementById('profAddress').value}`);
   window.location.href = `mailto:${ADMIN_EMAIL}?subject=${subject}&body=${body}`;
 });
-
-/* ===================== GENERIC LOCAL LIST HELPERS (memories / suggestions / contribute) ===================== */
-function loadList(key) {
-  try { return JSON.parse(localStorage.getItem(key)||'[]'); } catch(e){ return []; }
-}
-function saveList(key, arr) { localStorage.setItem(key, JSON.stringify(arr)); }
-function renderList(key, containerId, labelSingular) {
-  const arr = loadList(key);
-  const el = document.getElementById(containerId);
-  if (!arr.length) { el.innerHTML = ''; return; }
-  el.innerHTML = '<h3>Your saved ' + labelSingular + 's on this device</h3><ul class="lineList">' +
-    arr.map(item => `<li><span><b>${item.name || '(no name)'}</b><br>${item.text}</span></li>`).join('') +
+// live directory of everyone's profile, visible to all
+const profDirEl = document.createElement('div');
+profDirEl.className = 'lineSection';
+document.getElementById('panel-profile').querySelector('.formPanel').appendChild(profDirEl);
+fbdb.ref('profiles').on('value', snap => {
+  const all = snap.val() || {};
+  const rows = Object.values(all).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  if (!rows.length) { profDirEl.innerHTML = ''; return; }
+  profDirEl.innerHTML = '<h3>Family Directory (' + rows.length + ')</h3><ul class="lineList">' +
+    rows.map(p => `<li><span><b>${p.name}</b>${p.age?' &middot; age '+p.age:''}<br>${p.contact||''} ${p.address?('&middot; '+p.address):''}</span></li>`).join('') +
     '</ul>';
-}
-function setupSimpleForm(prefix, storageKey, labelSingular, mailSubjectPrefix) {
-  renderList(storageKey, prefix + 'List', labelSingular);
-  document.getElementById(prefix + 'Save').addEventListener('click', () => {
-    const name = document.getElementById(prefix + 'Name').value.trim();
-    const text = document.getElementById(prefix + 'Text').value.trim();
-    if (!text) return;
-    const arr = loadList(storageKey);
-    arr.push({ name, text, ts: new Date().toISOString() });
-    saveList(storageKey, arr);
-    document.getElementById(prefix + 'Text').value = '';
-    renderList(storageKey, prefix + 'List', labelSingular);
+});
+
+/* ===================== SHARED LISTS (memories / suggestions / contribute) via Firebase ===================== */
+function setupSimpleForm(prefix, dbPath, labelSingular, mailSubjectPrefix) {
+  let editingKey = null;
+  const nameEl = document.getElementById(prefix + 'Name');
+  const textEl = document.getElementById(prefix + 'Text');
+  const saveBtn = document.getElementById(prefix + 'Save');
+  const listEl = document.getElementById(prefix + 'List');
+
+  fbdb.ref(dbPath).on('value', snap => {
+    const all = snap.val() || {};
+    const entries = Object.entries(all).sort((a,b) => (b[1].ts||'').localeCompare(a[1].ts||''));
+    if (!entries.length) { listEl.innerHTML = ''; return; }
+    listEl.innerHTML = '<h3>Shared ' + labelSingular + 's from the family (' + entries.length + ')</h3><ul class="lineList">' +
+      entries.map(([key, item]) => `<li style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <span><b>${item.name || '(no name)'}</b><br>${(item.text||'').replace(/</g,'&lt;')}</span>
+        <button class="smallbtn ghost" style="flex-shrink:0;padding:4px 10px;font-size:0.68rem;" data-key="${key}">Edit</button>
+      </li>`).join('') +
+      '</ul>';
+    listEl.querySelectorAll('button[data-key]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const item = all[btn.dataset.key];
+        nameEl.value = item.name || '';
+        textEl.value = item.text || '';
+        editingKey = btn.dataset.key;
+        saveBtn.textContent = 'Update this ' + labelSingular;
+        textEl.scrollIntoView({behavior:'smooth', block:'center'});
+      });
+    });
   });
+
+  saveBtn.addEventListener('click', () => {
+    const name = nameEl.value.trim();
+    const text = textEl.value.trim();
+    if (!text) return;
+    const entry = { name, text, ts: new Date().toISOString() };
+    const ref = editingKey ? fbdb.ref(dbPath + '/' + editingKey) : fbdb.ref(dbPath).push();
+    ref.set(entry).then(() => {
+      textEl.value = '';
+      editingKey = null;
+      saveBtn.textContent = 'Save this ' + labelSingular;
+    });
+  });
+
   document.getElementById(prefix + 'Share').addEventListener('click', () => {
-    const arr = loadList(storageKey);
-    if (!arr.length) { alert('Nothing saved yet to share.'); return; }
-    const latest = arr[arr.length-1];
-    const subject = encodeURIComponent(mailSubjectPrefix + ' - ' + (latest.name||''));
-    const body = encodeURIComponent(`From: ${latest.name}\n\n${latest.text}`);
+    const name = nameEl.value.trim(), text = textEl.value.trim();
+    if (!text) { alert('Nothing to share yet — type something above first.'); return; }
+    const subject = encodeURIComponent(mailSubjectPrefix + ' - ' + name);
+    const body = encodeURIComponent(`From: ${name}\n\n${text}`);
     window.location.href = `mailto:${ADMIN_EMAIL}?subject=${subject}&body=${body}`;
   });
 }
-setupSimpleForm('mem', 'odhawani_memories', 'memory', 'Family memory');
-setupSimpleForm('sug', 'odhawani_suggestions', 'suggestion', 'Family suggestion');
-setupSimpleForm('con', 'odhawani_contributions', 'entry', 'Contribution/help entry');
+setupSimpleForm('mem', 'memories', 'memory', 'Family memory');
+setupSimpleForm('sug', 'suggestions', 'suggestion', 'Family suggestion');
+setupSimpleForm('con', 'contributions', 'entry', 'Contribution/help entry');
 </script>
 </body>
 </html>
