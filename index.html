@@ -469,20 +469,35 @@
   </div>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js" onerror="window.__fbLoadFailed=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js" onerror="window.__fbLoadFailed=true"></script>
 <script>
-const firebaseConfig = {
-  apiKey: "AIzaSyDS6xdQNkZOESd2mOLq85_YI15SDVHV-hQ",
-  authDomain: "mehta-odhawani-tree.firebaseapp.com",
-  databaseURL: "https://mehta-odhawani-tree-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "mehta-odhawani-tree",
-  storageBucket: "mehta-odhawani-tree.firebasestorage.app",
-  messagingSenderId: "249234994328",
-  appId: "1:249234994328:web:47088a0de294152b480ced"
-};
-firebase.initializeApp(firebaseConfig);
-const fbdb = firebase.database();
+let fbdb = null;
+try {
+  if (typeof firebase !== 'undefined' && !window.__fbLoadFailed) {
+    const firebaseConfig = {
+      apiKey: "AIzaSyDS6xdQNkZOESd2mOLq85_YI15SDVHV-hQ",
+      authDomain: "mehta-odhawani-tree.firebaseapp.com",
+      databaseURL: "https://mehta-odhawani-tree-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "mehta-odhawani-tree",
+      storageBucket: "mehta-odhawani-tree.firebasestorage.app",
+      messagingSenderId: "249234994328",
+      appId: "1:249234994328:web:47088a0de294152b480ced"
+    };
+    firebase.initializeApp(firebaseConfig);
+    fbdb = firebase.database();
+  } else {
+    console.warn('Firebase script did not load — shared family data (Profile/Memories/Suggestions/Contribute) will be unavailable this session.');
+  }
+} catch (e) {
+  console.warn('Firebase failed to initialize:', e);
+  fbdb = null;
+}
+function fbUnavailableMsg(el) {
+  el.innerHTML = '<p style="font-size:0.78rem;color:#a31c1c;text-align:center;padding:14px;background:#f6dcdc;border-radius:10px;">' +
+    'Unable to reach the shared family database right now. Please check your internet connection and reload the page — ' +
+    'this section needs it to load and save entries.</p>';
+}
 </script>
 <script>
 const NODE_W = 118;
@@ -809,7 +824,7 @@ function fillProfileForm(p) {
 }
 document.getElementById('profName').addEventListener('change', () => {
   const key = safeKey(document.getElementById('profName').value);
-  if (!key) return;
+  if (!key || !fbdb) return;
   fbdb.ref('profiles/' + key).once('value').then(snap => {
     const p = snap.val();
     if (p) { fillProfileForm(p); document.getElementById('profShare').style.display = 'block'; }
@@ -842,6 +857,7 @@ document.getElementById('profSave').addEventListener('click', () => {
   const name = document.getElementById('profName').value.trim();
   const key = safeKey(name);
   if (!key) { alert('Please enter your name first.'); return; }
+  if (!fbdb) { alert('Unable to reach the shared family database right now. Please check your internet connection and try again.'); return; }
   const p = {
     name,
     age: document.getElementById('profAge').value.trim(),
@@ -855,6 +871,8 @@ document.getElementById('profSave').addEventListener('click', () => {
     document.getElementById('profSavedMsg').style.display = 'block';
     document.getElementById('profShare').style.display = 'block';
     setTimeout(()=>{ document.getElementById('profSavedMsg').style.display='none'; }, 2500);
+  }).catch(err => {
+    alert('Could not save: ' + err.message);
   });
 });
 document.getElementById('profShare').addEventListener('click', () => {
@@ -868,7 +886,8 @@ const profDirEl = document.createElement('div');
 profDirEl.className = 'lineSection';
 profDirEl.style.marginTop = '22px';
 document.getElementById('panel-profile').querySelector('.formPanel').appendChild(profDirEl);
-fbdb.ref('profiles').on('value', snap => {
+if (fbdb) {
+  fbdb.ref('profiles').on('value', snap => {
   const all = snap.val() || {};
   const rows = Object.values(all).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (!rows.length) { profDirEl.innerHTML = ''; return; }
@@ -880,8 +899,11 @@ fbdb.ref('profiles').on('value', snap => {
     rows.map(p => `
       <div style="${cardStyle}">
         ${p.photo ? `<img src="${p.photo}" style="${photoStyle}">` : `<div style="${photoStyle}display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5906a;">${(p.name||'?').charAt(0).toUpperCase()}</div>`}
-        <div style="flex:1;">
-          <div style="font-weight:800;font-size:0.92rem;">${p.name || ''}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="font-weight:800;font-size:0.92rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name || ''} Mehta</div>
+            <button class="smallbtn ghost" style="flex-shrink:0;padding:4px 10px;font-size:0.68rem;" data-editkey="${safeKey(p.name)}">Edit</button>
+          </div>
           <div style="font-size:0.78rem;color:#5a4a30;line-height:1.6;margin-top:2px;">
             ${p.age ? 'Age: ' + p.age + '<br>' : ''}
             ${p.address ? 'Address: ' + p.address + '<br>' : ''}
@@ -891,7 +913,21 @@ fbdb.ref('profiles').on('value', snap => {
         </div>
       </div>`).join('') +
     '</div>';
-});
+  profDirEl.querySelectorAll('button[data-editkey]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.editkey;
+      const p = all[key];
+      if (!p) return;
+      document.getElementById('profName').value = p.name || '';
+      fillProfileForm(p);
+      document.getElementById('profShare').style.display = 'block';
+      document.getElementById('profName').scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  });
+  });
+} else {
+  fbUnavailableMsg(profDirEl);
+}
 
 
 /* ===================== SHARED LISTS (memories / suggestions / contribute) via Firebase ===================== */
@@ -901,6 +937,12 @@ function setupSimpleForm(prefix, dbPath, labelSingular, mailSubjectPrefix) {
   const textEl = document.getElementById(prefix + 'Text');
   const saveBtn = document.getElementById(prefix + 'Save');
   const listEl = document.getElementById(prefix + 'List');
+
+  if (!fbdb) {
+    fbUnavailableMsg(listEl);
+    saveBtn.addEventListener('click', () => alert('Unable to reach the shared family database right now. Please check your internet connection and try again.'));
+    return;
+  }
 
   fbdb.ref(dbPath).on('value', snap => {
     const all = snap.val() || {};
