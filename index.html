@@ -332,25 +332,32 @@
     </div>
   </div>
 
-  <!-- MY PROFILE (self-fill, saved on this device) -->
+  <!-- MY PROFILE (self-fill, shared via Firebase) -->
   <div class="panel" id="panel-profile">
     <div class="formPanel">
       <h2>My Profile</h2>
-      <p style="font-size:0.78rem;color:#8a7a58;margin-top:-4px;">Fill this in once — it saves on your phone/browser so you don't retype it. Tap "Share with family" to send your details to the family admin.</p>
-      <label>Your name (as in the tree)</label>
+      <p style="font-size:0.78rem;color:#8a7a58;margin-top:-4px;">Fill this in once — it's saved to the shared family directory below. Tap "Share with family" to also send your details to the family admin.</p>
+      <label>Photo</label>
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:4px;">
+        <img id="profPhotoPreview" src="" alt="" style="display:none;width:72px;height:72px;border-radius:50%;object-fit:cover;border:2px solid #cbb98a;">
+        <input type="file" id="profPhoto" accept="image/*" style="flex:1;font-size:0.8rem;">
+      </div>
+      <label>1. Name (as in the tree)</label>
       <div class="autocomplete">
         <input type="text" id="profName" placeholder="Type your name…" autocomplete="off">
         <div class="ac-list" id="profName-list"></div>
       </div>
-      <label>Age</label>
+      <label>2. Age</label>
       <input type="text" id="profAge" placeholder="e.g. 34" inputmode="numeric">
-      <label>Contact number</label>
-      <input type="text" id="profContact" placeholder="e.g. 98212 62142" inputmode="tel">
-      <label>Address</label>
+      <label>3. Address</label>
       <input type="text" id="profAddress" placeholder="City, Country">
+      <label>4. E-Mail</label>
+      <input type="text" id="profEmail" placeholder="e.g. name@email.com" inputmode="email">
+      <label>5. Mobile No</label>
+      <input type="text" id="profContact" placeholder="e.g. 98212 62142" inputmode="tel">
       <button class="goBtn" id="profSave">Save My Profile</button>
       <button class="smallbtn ghost" id="profShare" style="width:100%;padding:12px;margin-top:10px;display:none;">✉️ Share with family admin</button>
-      <div id="profSavedMsg" style="display:none;margin-top:12px;text-align:center;color:#2f8f52;font-weight:700;">✓ Saved on this device</div>
+      <div id="profSavedMsg" style="display:none;margin-top:12px;text-align:center;color:#2f8f52;font-weight:700;">✓ Saved to the family directory</div>
     </div>
   </div>
 
@@ -789,11 +796,16 @@ setupAutocomplete('profName','profName-list');
 function safeKey(name) {
   return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 }
-let currentProfileKey = null;
+let currentPhotoDataUrl = '';
 function fillProfileForm(p) {
   document.getElementById('profAge').value = p.age || '';
   document.getElementById('profContact').value = p.contact || '';
   document.getElementById('profAddress').value = p.address || '';
+  document.getElementById('profEmail').value = p.email || '';
+  currentPhotoDataUrl = p.photo || '';
+  const img = document.getElementById('profPhotoPreview');
+  if (currentPhotoDataUrl) { img.src = currentPhotoDataUrl; img.style.display = 'block'; }
+  else { img.style.display = 'none'; }
 }
 document.getElementById('profName').addEventListener('change', () => {
   const key = safeKey(document.getElementById('profName').value);
@@ -803,6 +815,29 @@ document.getElementById('profName').addEventListener('change', () => {
     if (p) { fillProfileForm(p); document.getElementById('profShare').style.display = 'block'; }
   });
 });
+document.getElementById('profPhoto').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      // downscale to keep the shared database small
+      const maxDim = 240;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      currentPhotoDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+      const preview = document.getElementById('profPhotoPreview');
+      preview.src = currentPhotoDataUrl;
+      preview.style.display = 'block';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+});
 document.getElementById('profSave').addEventListener('click', () => {
   const name = document.getElementById('profName').value.trim();
   const key = safeKey(name);
@@ -810,8 +845,10 @@ document.getElementById('profSave').addEventListener('click', () => {
   const p = {
     name,
     age: document.getElementById('profAge').value.trim(),
-    contact: document.getElementById('profContact').value.trim(),
     address: document.getElementById('profAddress').value.trim(),
+    email: document.getElementById('profEmail').value.trim(),
+    contact: document.getElementById('profContact').value.trim(),
+    photo: currentPhotoDataUrl || '',
     updatedAt: new Date().toISOString()
   };
   fbdb.ref('profiles/' + key).set(p).then(() => {
@@ -823,21 +860,39 @@ document.getElementById('profSave').addEventListener('click', () => {
 document.getElementById('profShare').addEventListener('click', () => {
   const name = document.getElementById('profName').value.trim();
   const subject = encodeURIComponent('My profile update - ' + name);
-  const body = encodeURIComponent(`Name: ${name}\nAge: ${document.getElementById('profAge').value}\nContact: ${document.getElementById('profContact').value}\nAddress: ${document.getElementById('profAddress').value}`);
+  const body = encodeURIComponent(`Name: ${name}\nAge: ${document.getElementById('profAge').value}\nAddress: ${document.getElementById('profAddress').value}\nE-Mail: ${document.getElementById('profEmail').value}\nMobile No: ${document.getElementById('profContact').value}`);
   window.location.href = `mailto:${ADMIN_EMAIL}?subject=${subject}&body=${body}`;
 });
-// live directory of everyone's profile, visible to all
+// live, alphabetical Directory of everyone's profile, visible to all
 const profDirEl = document.createElement('div');
 profDirEl.className = 'lineSection';
+profDirEl.style.marginTop = '22px';
 document.getElementById('panel-profile').querySelector('.formPanel').appendChild(profDirEl);
 fbdb.ref('profiles').on('value', snap => {
   const all = snap.val() || {};
   const rows = Object.values(all).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (!rows.length) { profDirEl.innerHTML = ''; return; }
-  profDirEl.innerHTML = '<h3>Family Directory (' + rows.length + ')</h3><ul class="lineList">' +
-    rows.map(p => `<li><span><b>${p.name}</b>${p.age?' &middot; age '+p.age:''}<br>${p.contact||''} ${p.address?('&middot; '+p.address):''}</span></li>`).join('') +
-    '</ul>';
+  const cardStyle = 'display:flex;gap:14px;align-items:flex-start;padding:16px 4px;border-bottom:1px solid #f0e8d8;';
+  const photoStyle = 'width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #cbb98a;flex-shrink:0;background:#f6ecd0;';
+  profDirEl.innerHTML =
+    '<h3 style="font-size:1rem;color:var(--accent);border-bottom:2px solid #cbb98a;padding-bottom:8px;margin-bottom:6px;">Directory</h3>' +
+    '<div>' +
+    rows.map(p => `
+      <div style="${cardStyle}">
+        ${p.photo ? `<img src="${p.photo}" style="${photoStyle}">` : `<div style="${photoStyle}display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5906a;">${(p.name||'?').charAt(0).toUpperCase()}</div>`}
+        <div style="flex:1;">
+          <div style="font-weight:800;font-size:0.92rem;">${p.name || ''}</div>
+          <div style="font-size:0.78rem;color:#5a4a30;line-height:1.6;margin-top:2px;">
+            ${p.age ? 'Age: ' + p.age + '<br>' : ''}
+            ${p.address ? 'Address: ' + p.address + '<br>' : ''}
+            ${p.email ? 'E-Mail: ' + p.email + '<br>' : ''}
+            ${p.contact ? 'Mobile No: ' + p.contact : ''}
+          </div>
+        </div>
+      </div>`).join('') +
+    '</div>';
 });
+
 
 /* ===================== SHARED LISTS (memories / suggestions / contribute) via Firebase ===================== */
 function setupSimpleForm(prefix, dbPath, labelSingular, mailSubjectPrefix) {
