@@ -1,0 +1,15 @@
+{
+  "name": "Mehta (Odhawani) Family Tree",
+  "short_name": "Odhawani Parivar",
+  "description": "Family tree, lineage finder, rituals calendar, and family hub for the Mehta (Odhawani) Parivar",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#faf3e6",
+  "theme_color": "#3a2b18",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
