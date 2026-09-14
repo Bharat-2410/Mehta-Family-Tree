@@ -1014,7 +1014,7 @@ if (fbdb) {
         ${p.photo ? `<img src="${p.photo}" style="${photoStyle}">` : `<div style="${photoStyle}display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5906a;">${(p.name||'?').charAt(0).toUpperCase()}</div>`}
         <div style="flex:1;min-width:0;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-            <div style="font-weight:800;font-size:0.92rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name || ''} Mehta</div>
+            <div style="font-weight:800;font-size:0.92rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:0.3px;">${p.name || ''} Mehta</div>
             <button class="smallbtn ghost" style="flex-shrink:0;padding:4px 10px;font-size:0.68rem;" data-editkey="${safeKey(p.name)}">Edit</button>
           </div>
           <div style="font-size:0.78rem;color:#5a4a30;line-height:1.6;margin-top:2px;">
