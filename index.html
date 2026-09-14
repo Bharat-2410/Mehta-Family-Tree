@@ -867,13 +867,17 @@ document.getElementById('lineGo').addEventListener('click', () => {
   box.innerHTML = html;
   printBtn.style.display='block';
 });
-/* ===================== ADMIN EMAIL (shared submit target) ===================== */
+/* ===================== ADMIN EMAIL & PIN (shared submit target / admin-only edit) ===================== */
 const ADMIN_EMAIL = 'aquaticremedies@gmail.com';
+const ADMIN_PIN = '2410'; // TODO: change this to a PIN only you know, then share it with no one else
 
 /* ===================== MY PROFILE (shared via Firebase) ===================== */
 setupAutocomplete('profName','profName-list');
+function stripMehtaSuffix(name) {
+  return (name||'').trim().replace(/\s+mehta\.?$/i, '').trim();
+}
 function safeKey(name) {
-  return (name||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+  return stripMehtaSuffix(name).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 }
 let currentPhotoDataUrl = '';
 function fillProfileForm(p) {
@@ -918,7 +922,7 @@ document.getElementById('profPhoto').addEventListener('change', (e) => {
   reader.readAsDataURL(file);
 });
 document.getElementById('profSave').addEventListener('click', () => {
-  const name = document.getElementById('profName').value.trim();
+  const name = stripMehtaSuffix(document.getElementById('profName').value.trim());
   const key = safeKey(name);
   if (!key) { alert('Please enter your name first.'); return; }
   if (!fbdb) { alert('Unable to reach the shared family database right now. Please check your internet connection and try again.'); return; }
@@ -932,6 +936,7 @@ document.getElementById('profSave').addEventListener('click', () => {
     updatedAt: new Date().toISOString()
   };
   fbdb.ref('profiles/' + key).set(p).then(() => {
+    document.getElementById('profName').value = name;
     document.getElementById('profSavedMsg').style.display = 'block';
     document.getElementById('profShare').style.display = 'block';
     setTimeout(()=>{ document.getElementById('profSavedMsg').style.display='none'; }, 2500);
@@ -950,9 +955,53 @@ const profDirEl = document.createElement('div');
 profDirEl.className = 'lineSection';
 profDirEl.style.marginTop = '22px';
 document.getElementById('panel-profile').querySelector('.formPanel').appendChild(profDirEl);
+
+let profileMergeDone = false;
+function mergeDuplicateProfiles(all) {
+  // groups every existing record by its *canonical* key (Mehta-suffix stripped,
+  // trimmed, lowercased) and merges any that collide - fixes both duplicate
+  // entries and inconsistent keys left over from before this rule existed.
+  const canonical = {};
+  let changed = false;
+  Object.entries(all).forEach(([oldKey, p]) => {
+    const cleanName = stripMehtaSuffix(p.name || '');
+    const canonKey = safeKey(cleanName);
+    if (!canonKey) return;
+    if (oldKey !== canonKey || cleanName !== p.name) changed = true;
+    if (!canonical[canonKey]) {
+      canonical[canonKey] = { ...p, name: cleanName };
+    } else {
+      changed = true;
+      const existing = canonical[canonKey];
+      const newer = (p.updatedAt || '') >= (existing.updatedAt || '') ? p : existing;
+      const older = newer === p ? existing : p;
+      canonical[canonKey] = {
+        name: cleanName,
+        age: newer.age || older.age || '',
+        address: newer.address || older.address || '',
+        email: newer.email || older.email || '',
+        contact: newer.contact || older.contact || '',
+        photo: newer.photo || older.photo || '',
+        updatedAt: newer.updatedAt || older.updatedAt || ''
+      };
+    }
+  });
+  if (!changed) return false;
+  const writes = Object.entries(canonical).map(([k, p]) => fbdb.ref('profiles/' + k).set(p));
+  Object.keys(all).forEach(oldKey => {
+    if (!canonical[oldKey]) writes.push(fbdb.ref('profiles/' + oldKey).remove());
+  });
+  Promise.all(writes).catch(err => console.warn('Merge cleanup failed:', err));
+  return true;
+}
+
 if (fbdb) {
   fbdb.ref('profiles').on('value', snap => {
   const all = snap.val() || {};
+  if (!profileMergeDone) {
+    profileMergeDone = true;
+    if (mergeDuplicateProfiles(all)) return; // the merge write will re-trigger this listener with clean data
+  }
   const rows = Object.values(all).sort((a,b) => (a.name||'').localeCompare(b.name||''));
   if (!rows.length) { profDirEl.innerHTML = ''; return; }
   const cardStyle = 'display:flex;gap:14px;align-items:flex-start;padding:16px 4px;border-bottom:1px solid #f0e8d8;';
@@ -982,6 +1031,13 @@ if (fbdb) {
       const key = btn.dataset.editkey;
       const p = all[key];
       if (!p) return;
+      const typedOwnKey = safeKey(document.getElementById('profName').value);
+      const isOwnEntry = typedOwnKey && typedOwnKey === key;
+      if (!isOwnEntry) {
+        const pin = prompt("This is someone else's entry. Only they can edit it themselves — or enter the admin PIN to edit it on their behalf:");
+        if (pin === null) return;
+        if (pin !== ADMIN_PIN) { alert('Incorrect PIN. You can edit your own entry by typing your name in the Name field above and saving over it.'); return; }
+      }
       document.getElementById('profName').value = p.name || '';
       fillProfileForm(p);
       document.getElementById('profShare').style.display = 'block';
