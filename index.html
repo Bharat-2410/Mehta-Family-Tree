@@ -879,6 +879,7 @@ function stripMehtaSuffix(name) {
 function safeKey(name) {
   return stripMehtaSuffix(name).toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
 }
+const MY_PROFILE_KEY_STORAGE = 'odhawani_my_profile_key';
 let currentPhotoDataUrl = '';
 function fillProfileForm(p) {
   document.getElementById('profAge').value = p.age || '';
@@ -890,7 +891,26 @@ function fillProfileForm(p) {
   if (currentPhotoDataUrl) { img.src = currentPhotoDataUrl; img.style.display = 'block'; }
   else { img.style.display = 'none'; }
 }
+// on opening this tab, if this device has already saved a profile before,
+// silently reload it so editing always continues on the SAME record —
+// changing the name field afterwards will update this record, never create a new one.
+if (fbdb) {
+  const rememberedKey = localStorage.getItem(MY_PROFILE_KEY_STORAGE);
+  if (rememberedKey) {
+    fbdb.ref('profiles/' + rememberedKey).once('value').then(snap => {
+      const p = snap.val();
+      if (p) {
+        document.getElementById('profName').value = p.name || '';
+        fillProfileForm(p);
+        document.getElementById('profShare').style.display = 'block';
+      }
+    });
+  }
+}
 document.getElementById('profName').addEventListener('change', () => {
+  // manual lookup by typed name - only meaningful if this device hasn't
+  // already got a remembered profile of its own (e.g. a fresh device/browser)
+  if (localStorage.getItem(MY_PROFILE_KEY_STORAGE)) return;
   const key = safeKey(document.getElementById('profName').value);
   if (!key || !fbdb) return;
   fbdb.ref('profiles/' + key).once('value').then(snap => {
@@ -923,9 +943,11 @@ document.getElementById('profPhoto').addEventListener('change', (e) => {
 });
 document.getElementById('profSave').addEventListener('click', () => {
   const name = stripMehtaSuffix(document.getElementById('profName').value.trim());
-  const key = safeKey(name);
-  if (!key) { alert('Please enter your name first.'); return; }
+  if (!name) { alert('Please enter your name first.'); return; }
   if (!fbdb) { alert('Unable to reach the shared family database right now. Please check your internet connection and try again.'); return; }
+  // reuse this device's own remembered record if it has one, even if the
+  // name has changed - this is what keeps edits to ONE entry, always.
+  const targetKey = localStorage.getItem(MY_PROFILE_KEY_STORAGE) || safeKey(name);
   const p = {
     name,
     age: document.getElementById('profAge').value.trim(),
@@ -935,7 +957,8 @@ document.getElementById('profSave').addEventListener('click', () => {
     photo: currentPhotoDataUrl || '',
     updatedAt: new Date().toISOString()
   };
-  fbdb.ref('profiles/' + key).set(p).then(() => {
+  fbdb.ref('profiles/' + targetKey).set(p).then(() => {
+    localStorage.setItem(MY_PROFILE_KEY_STORAGE, targetKey);
     document.getElementById('profName').value = name;
     document.getElementById('profSavedMsg').style.display = 'block';
     document.getElementById('profShare').style.display = 'block';
@@ -1002,20 +1025,23 @@ if (fbdb) {
     profileMergeDone = true;
     if (mergeDuplicateProfiles(all)) return; // the merge write will re-trigger this listener with clean data
   }
-  const rows = Object.values(all).sort((a,b) => (a.name||'').localeCompare(b.name||''));
+  const rows = Object.entries(all).sort((a,b) => (a[1].name||'').localeCompare(b[1].name||''));
   if (!rows.length) { profDirEl.innerHTML = ''; return; }
   const cardStyle = 'display:flex;gap:14px;align-items:flex-start;padding:16px 4px;border-bottom:1px solid #f0e8d8;';
   const photoStyle = 'width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #cbb98a;flex-shrink:0;background:#f6ecd0;';
   profDirEl.innerHTML =
     '<h3 style="font-size:1rem;color:var(--accent);border-bottom:2px solid #cbb98a;padding-bottom:8px;margin-bottom:6px;">Directory</h3>' +
     '<div>' +
-    rows.map(p => `
+    rows.map(([key, p]) => `
       <div style="${cardStyle}">
         ${p.photo ? `<img src="${p.photo}" style="${photoStyle}">` : `<div style="${photoStyle}display:flex;align-items:center;justify-content:center;font-weight:800;color:#a5906a;">${(p.name||'?').charAt(0).toUpperCase()}</div>`}
         <div style="flex:1;min-width:0;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
             <div style="font-weight:800;font-size:0.92rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase;letter-spacing:0.3px;">${p.name || ''} Mehta</div>
-            <button class="smallbtn ghost" style="flex-shrink:0;padding:4px 10px;font-size:0.68rem;" data-editkey="${safeKey(p.name)}">Edit</button>
+            <div style="flex-shrink:0;display:flex;gap:4px;">
+              <button class="smallbtn ghost" style="padding:4px 10px;font-size:0.68rem;" data-editkey="${key}">Edit</button>
+              <button class="smallbtn ghost" style="padding:4px 8px;font-size:0.68rem;color:#a31c1c;border-color:#a31c1c;" data-deletekey="${key}">✕</button>
+            </div>
           </div>
           <div style="font-size:0.78rem;color:#5a4a30;line-height:1.6;margin-top:2px;">
             ${p.age ? 'Age: ' + p.age + '<br>' : ''}
@@ -1031,17 +1057,30 @@ if (fbdb) {
       const key = btn.dataset.editkey;
       const p = all[key];
       if (!p) return;
-      const typedOwnKey = safeKey(document.getElementById('profName').value);
-      const isOwnEntry = typedOwnKey && typedOwnKey === key;
+      const isOwnEntry = localStorage.getItem(MY_PROFILE_KEY_STORAGE) === key;
       if (!isOwnEntry) {
-        const pin = prompt("This is someone else's entry. Only they can edit it themselves — or enter the admin PIN to edit it on their behalf:");
+        const pin = prompt("This is someone else's entry. Only they can edit it themselves (from their own device) — or enter the admin PIN to edit it on their behalf:");
         if (pin === null) return;
-        if (pin !== ADMIN_PIN) { alert('Incorrect PIN. You can edit your own entry by typing your name in the Name field above and saving over it.'); return; }
+        if (pin !== ADMIN_PIN) { alert('Incorrect PIN. You can edit your own entry by typing your name in the Name field above and saving.'); return; }
       }
       document.getElementById('profName').value = p.name || '';
       fillProfileForm(p);
       document.getElementById('profShare').style.display = 'block';
       document.getElementById('profName').scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  });
+  profDirEl.querySelectorAll('button[data-deletekey]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.deletekey;
+      const p = all[key];
+      if (!p) return;
+      const pin = prompt('Deleting "' + p.name + ' Mehta" from the Directory. Enter the admin PIN to confirm:');
+      if (pin === null) return;
+      if (pin !== ADMIN_PIN) { alert('Incorrect PIN — entry not deleted.'); return; }
+      if (!confirm('Are you sure you want to permanently delete "' + p.name + ' Mehta" from the Directory?')) return;
+      fbdb.ref('profiles/' + key).remove().then(() => {
+        if (localStorage.getItem(MY_PROFILE_KEY_STORAGE) === key) localStorage.removeItem(MY_PROFILE_KEY_STORAGE);
+      });
     });
   });
   });
