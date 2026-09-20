@@ -274,7 +274,7 @@
   #posterBtn small { display: block; font-weight: 400; font-size: 0.68rem; color: #cbb98a; margin-top: 3px; }
 
   @media print {
-    header, #tabs, .formPanel input, .goBtn, #posterBtn, #relForm { display: none !important; }
+    header, #tabs, .formPanel input, .goBtn, #posterBtn, #relForm, #adminEditSection { display: none !important; }
     #app { position: static; }
     body { overflow: visible; }
     #lineResult { display: block !important; border: none; }
@@ -377,7 +377,42 @@
       </div>
       <div id="lineResult"></div>
       <button class="smallbtn ghost" id="printBtn" style="display:none;width:100%;padding:12px;">🖨️ Print this page</button>
-      
+
+      <div id="adminEditSection" style="margin-top:26px;padding-top:18px;border-top:1px dashed #cbb98a;">
+        <button class="smallbtn ghost" id="adminEditToggle" style="width:100%;padding:12px;">🛠️ Admin: Add / Correct a Family Member</button>
+        <div id="adminEditForm" style="display:none;margin-top:14px;">
+          <p style="font-size:0.74rem;color:#8a7a58;margin-top:-2px;">Changes here update the whole app — Explore, Relationship, Lineage and search — for everyone, immediately. An admin PIN is required to confirm each change.</p>
+          <div style="display:flex;gap:8px;margin-bottom:12px;">
+            <button class="smallbtn" id="adminModeCorrect" style="flex:1;">✏️ Correct spelling</button>
+            <button class="smallbtn ghost" id="adminModeAdd" style="flex:1;">➕ Add new member</button>
+          </div>
+
+          <div id="adminCorrectBlock">
+            <label>Person to correct</label>
+            <div class="autocomplete">
+              <input type="text" id="adminCorrectPick" placeholder="Type their current name…" autocomplete="off">
+              <div class="ac-list" id="adminCorrectPick-list"></div>
+            </div>
+            <label>Corrected spelling</label>
+            <input type="text" id="adminCorrectNewName" placeholder="e.g. Kirti">
+            <button class="goBtn" id="adminCorrectSave">Save Correction</button>
+          </div>
+
+          <div id="adminAddBlock" style="display:none;">
+            <label>Parent (father) of the new member</label>
+            <div class="autocomplete">
+              <input type="text" id="adminAddParent" placeholder="Type the father's name…" autocomplete="off">
+              <div class="ac-list" id="adminAddParent-list"></div>
+            </div>
+            <label>New member's name</label>
+            <input type="text" id="adminAddName" placeholder="e.g. Aarav">
+            <button class="goBtn" id="adminAddSave">Add New Member</button>
+          </div>
+
+          <div id="adminEditMsg" style="display:none;margin-top:12px;text-align:center;font-weight:700;"></div>
+          <div id="adminEditLog"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -594,8 +629,8 @@ nodes.forEach(n => {
   minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + NODE_W);
   minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y + NODE_H);
 });
-const contentW = maxX - minX + 200;
-const contentH = maxY - minY + 200;
+let contentW = maxX - minX + 200;
+let contentH = maxY - minY + 200;
 const offsetX = -minX + 100;
 const offsetY = -minY + 100;
 
@@ -869,7 +904,231 @@ document.getElementById('lineGo').addEventListener('click', () => {
 });
 /* ===================== ADMIN EMAIL & PIN (shared submit target / admin-only edit) ===================== */
 const ADMIN_EMAIL = 'aquaticremedies@gmail.com';
-const ADMIN_PIN = '2410'; // TODO: change this to a PIN only you know, then share it with no one else
+const ADMIN_PIN = '1234'; // shared PIN — family members use this to submit corrections/additions
+
+/* ===================== ADMIN: ADD / CORRECT A FAMILY MEMBER (My Lineage) ===================== */
+const TREE_X_GAP = 26, TREE_LEVEL_H = 110;
+
+function promptAdminPin(actionLabel) {
+  const pin = prompt('Admin PIN required to ' + actionLabel + ':');
+  if (pin === null) return false;
+  if (pin !== ADMIN_PIN) { alert('Incorrect PIN — no changes were made.'); return false; }
+  return true;
+}
+
+function rebuildAllNames() {
+  allNames.length = 0;
+  nodes.forEach(n => {
+    const father = n.parent && byId[n.parent] ? byId[n.parent].name : '';
+    const display = father ? `${n.name} ${father}` : n.name;
+    allNames.push({ id: n.id, name: n.name, father, display });
+  });
+}
+
+function showAdminMsg(text, ok) {
+  const msg = document.getElementById('adminEditMsg');
+  msg.style.display = 'block';
+  msg.style.color = ok ? '#2f8f52' : '#a31c1c';
+  msg.textContent = text;
+  setTimeout(() => { msg.style.display = 'none'; }, 6000);
+}
+
+function applyRenameToDom(id, newName) {
+  const card = cardsDiv.querySelector(`.card[data-id="${id}"]`);
+  if (card) { card.textContent = newName; card.dataset.name = newName.toLowerCase(); }
+}
+
+function growCanvasBoundsFor(n) {
+  let grew = false;
+  if (n.x + NODE_W > maxX) { maxX = n.x + NODE_W; grew = true; }
+  if (n.x < minX) { minX = n.x; grew = true; }
+  if (n.y + NODE_H > maxY) { maxY = n.y + NODE_H; grew = true; }
+  if (n.y < minY) { minY = n.y; grew = true; }
+  if (!grew) return;
+  contentW = maxX - minX + 200;
+  contentH = maxY - minY + 200;
+  canvas.style.width = contentW + 'px';
+  canvas.style.height = contentH + 'px';
+  svg.setAttribute('width', contentW);
+  svg.setAttribute('height', contentH);
+}
+
+function addExploreCardAndLine(n) {
+  n.darkhex = darken(n.hex);
+  n.tinthex = tint(n.hex);
+  growCanvasBoundsFor(n);
+  const x = n.x + offsetX, y = n.y + offsetY;
+  const cardEl = document.createElement('div');
+  cardEl.className = 'card';
+  cardEl.style.left = x + 'px';
+  cardEl.style.top = y + 'px';
+  cardEl.style.borderColor = n.darkhex;
+  cardEl.style.background = n.tinthex;
+  cardEl.style.borderStyle = 'dashed';
+  cardEl.style.borderWidth = '2px';
+  cardEl.title = 'Newly added — awaiting inclusion in the official master tree';
+  cardEl.dataset.id = n.id;
+  cardEl.dataset.name = n.name.toLowerCase();
+  cardEl.textContent = n.name;
+  cardsDiv.appendChild(cardEl);
+  allCards.push(cardEl);
+
+  const p = byId[n.parent];
+  if (p) {
+    const px = p.x + offsetX + NODE_W / 2, py = p.y + offsetY + NODE_H;
+    const cx = n.x + offsetX + NODE_W / 2, cy = n.y + offsetY;
+    const midY = py + (cy - py) / 2;
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M ${px} ${py} L ${px} ${midY} L ${cx} ${midY} L ${cx} ${cy}`);
+    path.setAttribute('stroke', n.darkhex);
+    path.setAttribute('stroke-width', '3');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('stroke-dasharray', '6,5');
+    svg.appendChild(path);
+  }
+}
+
+function nextNewMemberId() {
+  let n = 1;
+  while (byId['new_' + n]) n++;
+  return 'new_' + n;
+}
+
+// ---- UI: toggle + mode switch ----
+document.getElementById('adminEditToggle').addEventListener('click', () => {
+  const form = document.getElementById('adminEditForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('adminModeCorrect').addEventListener('click', () => {
+  document.getElementById('adminModeCorrect').classList.remove('ghost');
+  document.getElementById('adminModeAdd').classList.add('ghost');
+  document.getElementById('adminCorrectBlock').style.display = 'block';
+  document.getElementById('adminAddBlock').style.display = 'none';
+});
+document.getElementById('adminModeAdd').addEventListener('click', () => {
+  document.getElementById('adminModeAdd').classList.remove('ghost');
+  document.getElementById('adminModeCorrect').classList.add('ghost');
+  document.getElementById('adminAddBlock').style.display = 'block';
+  document.getElementById('adminCorrectBlock').style.display = 'none';
+});
+
+setupAutocomplete('adminCorrectPick', 'adminCorrectPick-list');
+setupAutocomplete('adminAddParent', 'adminAddParent-list');
+
+// ---- Correct spelling ----
+document.getElementById('adminCorrectSave').addEventListener('click', () => {
+  const id = document.getElementById('adminCorrectPick').dataset.selectedId;
+  const newNameRaw = document.getElementById('adminCorrectNewName').value.trim();
+  if (!id || !byId[id]) { showAdminMsg('Please pick the person from the suggestions list.', false); return; }
+  if (!newNameRaw) { showAdminMsg('Please type the corrected spelling.', false); return; }
+  const newName = newNameRaw.toUpperCase();
+  if (!promptAdminPin('correct this name')) return;
+
+  const oldName = byId[id].name;
+  byId[id].name = newName;
+  applyRenameToDom(id, newName);
+  rebuildAllNames();
+  runSearch();
+
+  if (fbdb) {
+    fbdb.ref('treeEdits/renames/' + id).set({ name: newName, oldName, at: Date.now() });
+    fbdb.ref('treeEditLog').push({ type: 'rename', id, oldName, newName, at: Date.now() });
+  }
+  document.getElementById('adminCorrectPick').value = '';
+  document.getElementById('adminCorrectPick').dataset.selectedId = '';
+  document.getElementById('adminCorrectNewName').value = '';
+  showAdminMsg(`Saved — "${oldName}" is now "${newName}" everywhere in the app.`, true);
+});
+
+// ---- Add new member (new generation) ----
+document.getElementById('adminAddSave').addEventListener('click', () => {
+  const parentId = document.getElementById('adminAddParent').dataset.selectedId;
+  const newNameRaw = document.getElementById('adminAddName').value.trim();
+  if (!parentId || !byId[parentId]) { showAdminMsg('Please pick the parent from the suggestions list.', false); return; }
+  if (!newNameRaw) { showAdminMsg("Please type the new member's name.", false); return; }
+  const newName = newNameRaw.toUpperCase();
+  if (!promptAdminPin('add this new family member')) return;
+
+  const parent = byId[parentId];
+  const siblingCount = (childrenOf[parentId] || []).length;
+  const newId = nextNewMemberId();
+  const n = {
+    id: newId,
+    name: newName,
+    x: parent.x + siblingCount * (NODE_W + TREE_X_GAP),
+    y: parent.y - TREE_LEVEL_H,
+    depth: parent.depth + 1,
+    hex: parent.hex,
+    parent: parentId
+  };
+  nodes.push(n);
+  byId[newId] = n;
+  (childrenOf[parentId] = childrenOf[parentId] || []).push(newId);
+  addExploreCardAndLine(n);
+  rebuildAllNames();
+
+  if (fbdb) {
+    fbdb.ref('treeEdits/additions/' + newId).set({
+      name: newName, parent: parentId, x: n.x, y: n.y, depth: n.depth, hex: n.hex, at: Date.now()
+    });
+    fbdb.ref('treeEditLog').push({ type: 'add', id: newId, name: newName, parentId, parentName: parent.name, at: Date.now() });
+  }
+  document.getElementById('adminAddParent').value = '';
+  document.getElementById('adminAddParent').dataset.selectedId = '';
+  document.getElementById('adminAddName').value = '';
+  showAdminMsg(`Saved — "${newName}" added as a child of "${parent.name}" everywhere in the app.`, true);
+});
+
+// ---- Live sync: apply renames/additions made from other devices/sessions ----
+if (fbdb) {
+  fbdb.ref('treeEdits/renames').on('value', snap => {
+    const all = snap.val() || {};
+    let changedAny = false;
+    Object.entries(all).forEach(([id, edit]) => {
+      if (byId[id] && edit && edit.name && byId[id].name !== edit.name) {
+        byId[id].name = edit.name;
+        applyRenameToDom(id, edit.name);
+        changedAny = true;
+      }
+    });
+    if (changedAny) { rebuildAllNames(); runSearch(); }
+  });
+  fbdb.ref('treeEdits/additions').on('value', snap => {
+    const all = snap.val() || {};
+    let changedAny = false;
+    Object.entries(all).forEach(([id, edit]) => {
+      if (!byId[id] && edit && edit.name && edit.parent) {
+        const n = { id, name: edit.name, x: edit.x, y: edit.y, depth: edit.depth, hex: edit.hex, parent: edit.parent };
+        nodes.push(n);
+        byId[id] = n;
+        (childrenOf[edit.parent] = childrenOf[edit.parent] || []).push(id);
+        addExploreCardAndLine(n);
+        changedAny = true;
+      }
+    });
+    if (changedAny) rebuildAllNames();
+  });
+  fbdb.ref('treeEditLog').limitToLast(15).on('value', snap => {
+    const all = snap.val() || {};
+    const rows = Object.values(all).sort((a, b) => (b.at || 0) - (a.at || 0));
+    const logEl = document.getElementById('adminEditLog');
+    if (!rows.length) { logEl.innerHTML = ''; return; }
+    logEl.innerHTML = '<h4 style="font-size:0.78rem;color:var(--accent);margin:14px 0 6px;">Recent Tree Edits</h4>' +
+      '<ul class="lineList" style="font-size:0.76rem;">' +
+      rows.map(r => {
+        const when = r.at ? new Date(r.at).toLocaleDateString() : '';
+        return r.type === 'rename'
+          ? `<li>"${r.oldName}" corrected to "${r.newName}" <span class="gen">${when}</span></li>`
+          : `<li>"${r.name}" added as child of "${r.parentName}" <span class="gen">${when}</span></li>`;
+      }).join('') +
+      '</ul>';
+  });
+} else {
+  document.getElementById('adminEditToggle').addEventListener('click', () => {
+    fbUnavailableMsg(document.getElementById('adminEditLog'));
+  }, { once: true });
+}
 
 /* ===================== MY PROFILE (shared via Firebase) ===================== */
 setupAutocomplete('profName','profName-list');
