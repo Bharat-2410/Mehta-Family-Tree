@@ -1150,29 +1150,23 @@ function fillProfileForm(p) {
   if (currentPhotoDataUrl) { img.src = currentPhotoDataUrl; img.style.display = 'block'; }
   else { img.style.display = 'none'; }
 }
-// on opening this tab, if this device has already saved a profile before,
-// silently reload it so editing always continues on the SAME record —
-// changing the name field afterwards will update this record, never create a new one.
-if (fbdb) {
-  const rememberedKey = localStorage.getItem(MY_PROFILE_KEY_STORAGE);
-  if (rememberedKey) {
-    fbdb.ref('profiles/' + rememberedKey).once('value').then(snap => {
-      const p = snap.val();
-      if (p) {
-        document.getElementById('profName').value = p.name || '';
-        fillProfileForm(p);
-        document.getElementById('profShare').style.display = 'block';
-      }
-    });
-  }
-}
+// My Profile always OPENS blank — it no longer silently reloads a saved
+// profile just because this tab was opened. Saving still updates the SAME
+// record every time (never creates a duplicate), because the save button
+// below targets this device's remembered key regardless of what's typed;
+// this block only controls what's shown on screen, not what gets saved to.
 document.getElementById('profName').addEventListener('change', () => {
-  // manual lookup by typed name - only meaningful if this device hasn't
-  // already got a remembered profile of its own (e.g. a fresh device/browser)
-  if (localStorage.getItem(MY_PROFILE_KEY_STORAGE)) return;
-  const key = safeKey(document.getElementById('profName').value);
-  if (!key || !fbdb) return;
-  fbdb.ref('profiles/' + key).once('value').then(snap => {
+  const typedName = document.getElementById('profName').value.trim();
+  if (!typedName || !fbdb) return;
+  // If this device has saved a profile before, typing a name back in and
+  // looking it up brings back THIS device's own record (matching what Save
+  // will actually update). A brand-new device with no remembered profile
+  // looks the typed name up directly, so an existing member can find and
+  // continue their own entry from a fresh browser.
+  const rememberedKey = localStorage.getItem(MY_PROFILE_KEY_STORAGE);
+  const lookupKey = rememberedKey || safeKey(typedName);
+  if (!lookupKey) return;
+  fbdb.ref('profiles/' + lookupKey).once('value').then(snap => {
     const p = snap.val();
     if (p) { fillProfileForm(p); document.getElementById('profShare').style.display = 'block'; }
   });
